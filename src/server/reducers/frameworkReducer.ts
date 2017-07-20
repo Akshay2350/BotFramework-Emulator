@@ -36,20 +36,11 @@ import { IFrameworkSettings, frameworkDefault } from '../../types/serverSettings
 
 
 export type FrameworkAction = {
-    type: 'Framework_Set1',
+    type: 'Framework_Set',
     state: {
-        port: string,
         ngrokPath: string,
-        serviceUrl: string
-    }
-} | {
-    type: 'Framework_Set2',
-    state: {
-        port: string,
-        ngrokPath: string,
-        serviceUrl: string,
-        ngrokServiceUrl: string,
-        ngrokRunning: boolean
+        bypassNgrokLocalhost: boolean,
+        stateSizeLImit: number
     }
 }
 
@@ -58,8 +49,7 @@ export const frameworkReducer: Reducer<IFrameworkSettings> = (
     action: FrameworkAction
 ) => {
     switch (action.type) {
-        case 'Framework_Set1':
-        case 'Framework_Set2':
+        case 'Framework_Set':
             return Object.assign({}, state, action.state);
         default:
             return state

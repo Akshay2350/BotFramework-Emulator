@@ -32,11 +32,9 @@
 //
 
 import * as React from 'react';
-import { getSettings, ISettings, addSettingsListener } from '../settings';
-import { Settings as ServerSettings } from '../../types/serverSettingsTypes';
-import { AddressBarActions, ConversationActions, ServerSettingsActions } from '../reducers';
-import { IBot, newBot } from '../../types/botTypes';
-import * as log from '../log';
+import { getSettings, addSettingsListener } from '../settings';
+import { AddressBarActions } from '../reducers';
+import { IBot } from '../../types/botTypes';
 import { AddressBarOperators } from './addressBarOperators';
 import * as Constants from '../constants';
 
@@ -63,7 +61,7 @@ export class AddressBarSearch extends React.Component<{}, {}> {
         const settings = getSettings();
         if (!settings.addressBar.showSearchResults) return null;
         if (settings.addressBar.showBotCreds) return null;
-        if (!settings.addressBar.matchingBots.length) return null;
+        if (!settings.addressBar.matchingBots || !settings.addressBar.matchingBots.length) return null;
         return (
             <div className="addressbar-search">
                 {this.searchResultComponents()}

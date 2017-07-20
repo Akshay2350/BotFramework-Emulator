@@ -1,4 +1,4 @@
-# Microsoft Bot Framework Emulator
+# Microsoft Bot Framework Channel Emulator
 
 The [Microsoft Bot Framework](https://botframework.com) is a service and [SDK](https://github.com/Microsoft/BotBuilder) that enables organizations to build and deploy intelligent agents, known as bots.
 
@@ -25,6 +25,7 @@ The Bot Framework Emulator can communicate with your bot wherever it is running;
 * [Connect to a bot running locally](https://github.com/Microsoft/BotFramework-Emulator/wiki/Getting-Started#connect-to-a-bot-running-on-localhost)
 * [Connect to a bot hosted remotely](https://github.com/Microsoft/BotFramework-Emulator/wiki/Getting-Started#connect-to-a-bot-hosted-remotely)
 * [Connect to an Azure Bot Service](https://github.com/Microsoft/BotFramework-Emulator/wiki/Getting-Started#connect-to-an-azure-bot-service)
+* Read the [Wiki](https://github.com/Microsoft/BotFramework-Emulator/wiki)
 
 ## Contributing
 
@@ -32,11 +33,12 @@ If you are interested in fixing issues and contributing directly to the code bas
 * [How to build and run from source](https://github.com/Microsoft/BotFramework-Emulator/wiki/How-to-Contribute#clone-and-build)
 * [Submitting pull requests](https://github.com/Microsoft/BotFramework-Emulator/wiki/How-to-Contribute#pull-requests)
 
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
 ## Feedback
 
+* File a bug or suggestion in [GitHub Issues](https://github.com/Microsoft/BotFramework-Emulator/wiki/Submitting-Bugs-&-Suggestions)
 * Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/botframework)
-* File a bug in [GitHub Issues](https://github.com/Microsoft/BotFramework-Emulator/wiki/Submitting-Bugs-&-Suggestions)
-* Request a new feature on [GitHub](https://github.com/Microsoft/BotFramework-Emulator/wiki/Submitting-Bugs-&-Suggestions)
 
 ## Related
 

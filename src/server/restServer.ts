@@ -36,8 +36,6 @@ import * as log from './log';
 
 
 export class RestServer {
-    // REVIEW: Can we get this from the Restify.server?
-    port: number;
     router: Restify.Server;
 
     constructor(name: string) {
@@ -45,27 +43,19 @@ export class RestServer {
             name: name
         });
 
-        // REVIEW: Which of these do we need?
-        this.router.use(Restify.acceptParser(this.router.acceptable));
-        this.router.use(stripEmptyBearerToken);
-        this.router.use(Restify.authorizationParser());
-        this.router.use(Restify.CORS());
-        this.router.use(Restify.dateParser());
-        this.router.use(Restify.queryParser());
-        this.router.use(Restify.jsonp());
-        this.router.use(Restify.gzipResponse());
-        this.router.use(Restify.requestLogger());
-        this.router.use(Restify.conditionalRequest());
-        this.router.use(Restify.fullResponse());
-        this.router.use(Restify.bodyParser({ mapParams: true, mapFiles: true }));
-    }
-
-    public restart(port: number) {
-        this.stop();
-        this.port = port;
-        return this.router.listen(this.port, () => {
+        this.router.on('listening', () => {
             log.debug(`${this.router.name} listening on ${this.router.url}`);
         });
+
+        this.router.use(Restify.acceptParser(this.router.acceptable));
+        this.router.use(stripEmptyBearerToken);
+        this.router.use(Restify.dateParser());
+        this.router.use(Restify.queryParser());
+    }
+
+    public restart() {
+        this.stop();
+        return this.router.listen();
     }
 
     public stop() {
@@ -73,7 +63,7 @@ export class RestServer {
     }
 }
 
-// when debugging locally with a bot with appid and password = "" 
+// when debugging locally with a bot with appid and password = ""
 // our csx environment will generate a Authorization token of "Bearer"
 // This confuses the auth system, we either want no auth header for local debug
 // or we want a full bearer token.  This parser strips off the Auth header if it is just "Bearer"

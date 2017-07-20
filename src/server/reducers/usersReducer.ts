@@ -46,6 +46,11 @@ export type UsersAction = {
     state: {
         users: IUser[]
     }
+} | {
+    type: 'Users_RemoveUsers',
+    state: {
+        users: IUser[]
+    }
 }
 
 export const usersReducer: Reducer<IUserSettings> = (
@@ -64,6 +69,10 @@ export const usersReducer: Reducer<IUserSettings> = (
                 newUsersById[user.id] = user;
             }
             return Object.assign({}, state, { usersById: newUsersById });
+        }
+        case 'Users_RemoveUsers': {
+            //Object.assign({}, state, { }
+            return state;
         }
         default:
             return state;

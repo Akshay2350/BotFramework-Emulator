@@ -31,17 +31,17 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+export = 0;     // this is required to work around a typescript bug in 2.2.1+
+
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import { webFrame } from 'electron';
 import { MainView } from './mainView';
 import * as Settings from './settings';
-import { uniqueId } from '../utils';
 import { navigate } from './hyperlinkHandler';
 import * as log from './log';
 
-
-process.on('uncaughtException', (error) => {
+(process as NodeJS.EventEmitter).on('uncaughtException', (error) => {
     log.error('[err-client]', error.message, error.stack);
 });
 
@@ -51,7 +51,6 @@ window.onerror = (message: string, filename?: string, lineno?: number, colno?: n
 }
 
 webFrame.setZoomLevel(1);
-webFrame.setZoomLevelLimits(1, 1);
 webFrame.setZoomFactor(1);
 webFrame.registerURLSchemeAsPrivileged('emulator');
 

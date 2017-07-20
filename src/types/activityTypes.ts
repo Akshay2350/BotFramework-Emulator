@@ -47,6 +47,7 @@ export interface IActivity extends IETagObject {
     id?: string,
     serviceUrl?: string,
     timestamp?: string,
+    localTimestamp?: string,
     channelId?: string,
     from?: IChannelAccount,
     conversation?: IConversationAccount,
@@ -72,7 +73,8 @@ export interface IConversationParameters extends IActivity {
     membersRemoved?: IChannelAccount[],
     topicName?: string,
     activity?: IActivity,
-    channelData : any
+    channelData?: any,
+    conversationId?: string
 }
 
 export interface IContactRelationUpdateActivity extends IActivity {
@@ -99,6 +101,21 @@ export interface ITriggerActivity extends IActivity {
     value?: any;
 }
 
+export interface IConversationReference {
+    activityId: string,
+    bot: IChannelAccount,
+    channelId: string,
+    conversation: IConversationAccount,
+    serviceUrl: string,
+    user: IChannelAccount
+}
+
+export interface IInvokeActivity extends IActivity {
+    name?: string,
+    value?: any,
+    relatesTo?: IConversationReference
+}
+
 export interface IGenericActivity extends
     IActivity,
     ITypingActivity,
@@ -107,6 +124,7 @@ export interface IGenericActivity extends
     IMessageActivity,
     IActionActivity,
     IEndOfConversationActivity,
-    ITriggerActivity {
+    ITriggerActivity,
+    IInvokeActivity {
 }
 

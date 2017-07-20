@@ -33,29 +33,35 @@
 
 import * as React from 'react';
 import * as Splitter from 'react-split-pane';
-import * as BotChat from 'msbotchat';
-import * as log from './log';
-import { getSettings, settingsDefault, Settings, addSettingsListener, selectedActivity$ } from './settings';
-import { LayoutActions, InspectorActions, LogActions } from './reducers';
+import * as BotChat from 'botframework-webchat';
+import { getSettings, Settings, addSettingsListener, selectedActivity$ } from './settings';
+import { LayoutActions, InspectorActions } from './reducers';
 import { Settings as ServerSettings } from '../types/serverSettingsTypes';
 import { AddressBar } from './addressBar/addressBar';
 import { InspectorView } from './inspectorView'
 import { LogView } from './logView';
-import { uniqueId } from '../utils';
 import { IUser } from '../types/userTypes';
 import { AboutDialog } from './dialogs/aboutDialog';
 import { AppSettingsDialog } from './dialogs/appSettingsDialog';
 import { ConversationSettingsDialog } from './dialogs/conversationSettingsDialog';
 import * as Constants from './constants';
+import { Emulator } from './emulator';
+import { BotEmulatorContext } from './botEmulatorContext';
+import { AddressBarOperators } from './addressBar/addressBarOperators';
 
+const remote = require('electron').remote;
+const ipcRenderer = require('electron').ipcRenderer;
 
 export class MainView extends React.Component<{}, {}> {
     settingsUnsubscribe: any;
+    settingsLoadUnsubscribe: any;
     reuseKey: number = 0;
     directline: BotChat.DirectLine;
     conversationId: string;
     userId: string;
     botId: string;
+    botChatContainer: HTMLElement;
+    shouldWarnOfBotChange: boolean = false;
 
     componentWillMount() {
         this.settingsUnsubscribe = addSettingsListener((settings: Settings) => {
@@ -86,10 +92,12 @@ export class MainView extends React.Component<{}, {}> {
                     //    log.debug(`ended conversation`);
                     }
                     if (this.conversationId.length && this.userId.length && this.botId.length) {
-                        this.directline = new BotChat.DirectLine(
-                            { secret: settings.conversation.conversationId, token: settings.conversation.conversationId },
-                            `http://localhost:${settings.serverSettings.framework.port}/v3/directline`
-                        );
+                        this.directline = new BotChat.DirectLine({
+                            secret: settings.conversation.conversationId,
+                            token: settings.conversation.conversationId,
+                            domain: `${Emulator.serviceUrl}/v3/directline`,
+                            webSocket: false
+                        });
                     //    log.debug(`started new conversation`);
                     }
                     this.reuseKey++;
@@ -115,6 +123,83 @@ export class MainView extends React.Component<{}, {}> {
         this.botId = undefined;
     }
 
+    componentDidMount() {
+        // listen to future protocol handler invocations and update the emulator's active bot when this happens
+        ipcRenderer.on('botemulator', (event: any, message: any) => {
+            console.log('received url: ' + message);
+            this.shouldWarnOfBotChange = true;
+            this.setBot(message);
+        });
+
+        console.log("location.search: " + location.search);
+
+        // on application start, a query string may have some parameters that provide initial context about
+        // the bot to connect to
+        if (location.search) {
+            this.setBot(location.search);
+        }
+
+        // request any urls that may have queued while the app was starting
+        ipcRenderer.send('getUrls');
+    }
+
+    // set the current bot based on an encoded bot emulator URI
+    // based on the setting avialability, this will either immediately or in a deferred way set
+    // the address information to the encoded bot and connect to this bot
+    private setBot(encodedBot: string): void {
+        let botContext = new BotEmulatorContext(encodedBot);
+        if (botContext.isValid()) {
+            // settings may or may not be loaded at this point
+            // if they are, use them directly, if not, wait for them to be loaded
+            if(this.settingsAreLoaded()) {
+                this.verifyAndAssignBot(botContext);
+            } else {
+                this.settingsLoadUnsubscribe = addSettingsListener((settings: Settings) => {
+                    if(botContext && this.settingsAreLoaded()) {
+                        this.verifyAndAssignBot(botContext);
+                        botContext = undefined;
+                        if (this.settingsLoadUnsubscribe) {
+                            this.settingsLoadUnsubscribe();
+                            this.settingsLoadUnsubscribe = undefined;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    // determines if we need to warn the user that the bot connection will change due to an event
+    // such as a protocol handler invocation, and in this case let the user choose whether to continue or not
+    private verifyAndAssignBot(botContext: BotEmulatorContext): void {
+        let assignBot: boolean = true;
+        if (this.shouldWarnOfBotChange) {
+            const serverSettings = new ServerSettings(getSettings().serverSettings);
+            const activeBot = serverSettings.getActiveBot();
+            if(activeBot && !botContext.matchesBot(activeBot)) {
+                if (remote.dialog.showMessageBox({
+                                type: 'question',
+                                title: 'Connect to Bot',
+                                message: 'Are you sure you want to update and connect to the bot at \'' + botContext.endpoint + '\'?',
+                                buttons: ['Yes', 'No'],
+                                defaultId: 0,
+                                cancelId: 1}) === 1) {
+                    assignBot = false;
+                }
+            }
+            this.shouldWarnOfBotChange = false;
+        }
+
+        if (assignBot) {
+            AddressBarOperators.assignBot(botContext);
+        }
+    }
+
+    // Determine if the settings are currently loaded and available to use
+    private settingsAreLoaded(): boolean {
+        const settings = getSettings();
+        return (settings && settings.serverSettings && settings.serverSettings.bots) as any as boolean;
+    }
+
     getCurrentUser(serverSettings: ServerSettings): IUser {
         if (serverSettings && serverSettings.users && serverSettings.users.currentUserId) {
             let user: IUser = serverSettings.users.usersById[serverSettings.users.currentUserId];
@@ -124,21 +209,49 @@ export class MainView extends React.Component<{}, {}> {
         return null;
     }
 
-    botChatComponent() {
+    verticalSplitChange(size: number) {
+        this.updateBotChatContainerCSS(size);
+        LayoutActions.rememberVerticalSplitter(size);
+    }
+
+    updateBotChatContainerCSS(size: number) {
+        if (this.botChatContainer) {
+            let bounds = remote.getCurrentWindow().getBounds();
+            if (bounds.width - size <= 450) {
+                this.botChatContainer.classList.remove('wc-wide');
+                this.botChatContainer.classList.add('wc-narrow');
+            } else if (bounds.width - size >= 768) {
+                this.botChatContainer.classList.remove('wc-narrow');
+                this.botChatContainer.classList.add('wc-wide');
+            } else {
+                this.botChatContainer.classList.remove('wc-wide', 'wc-narrow');
+            }
+        }
+    }
+
+    initBotChatContainerRef(ref, initialWidth) {
+        this.botChatContainer = ref;
+        this.updateBotChatContainerCSS(initialWidth);
+    }
+
+    botChatComponent(initialWidth) {
         if (this.directline) {
             const settings = getSettings();
+            const srvSettings = new ServerSettings(settings.serverSettings);
+            const activeBot = srvSettings.getActiveBot();
             const props: BotChat.ChatProps = {
                 botConnection: this.directline,
-                locale: 'en-us',
+                locale: activeBot.locale || remote.app.getLocale(),
                 formatOptions: {
                     showHeader: false
                 },
-                selectedActivity: selectedActivity$(),
-                user: this.getCurrentUser(settings.serverSettings)
+                selectedActivity: selectedActivity$() as any,
+                user: this.getCurrentUser(settings.serverSettings),
+                bot: { name: "Bot", id: activeBot.botId },
+                resize: 'detect'
             }
             InspectorActions.clear();
-            let srvSettings = new ServerSettings(settings.serverSettings);
-            return <BotChat.Chat key={this.reuseKey} {...props} />
+            return <div className="wc-app" ref={ref => this.initBotChatContainerRef(ref, initialWidth)}><BotChat.Chat key={this.reuseKey} {...props} /></div>
         } else {
             return (
                 <div className='emu-chatview-background'>
@@ -161,10 +274,10 @@ export class MainView extends React.Component<{}, {}> {
         return (
             <div className='mainview'>
                 <div className='botchat-container'>
-                    <Splitter split="vertical" minSize="200px" defaultSize={vertSplit} primary="second" onChange={(size) => LayoutActions.rememberVerticalSplitter(size)}>
+                    <Splitter split="vertical" minSize="200px" defaultSize={vertSplit} primary="second" onChange={(size) => this.verticalSplitChange(size)}>
                         <div className='fill-parent'>
                             <AddressBar />
-                            {this.botChatComponent()}
+                            {this.botChatComponent(vertSplit)}
                         </div>
                         <div className="fill-parent">
                             <Splitter split="horizontal" primary="second" minSize="42px" defaultSize={horizSplit} onChange={(size) => LayoutActions.rememberHorizontalSplitter(size)}>

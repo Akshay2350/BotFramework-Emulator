@@ -33,27 +33,28 @@
 
 import * as Restify from 'restify';
 import * as HttpStatus from "http-status-codes";
-import { emulator } from '../emulator';
-import { getSettings } from '../settings';
-import { uniqueId } from '../../utils';
-import { IGenericActivity } from '../../types/activityTypes';
-import { IAttachment } from '../../types/attachmentTypes';
-import { IAttachmentData } from '../../types/attachmentTypes';
-import { AttachmentsController } from '../framework/attachmentsController';
-import * as log from '../log';
-import * as Os from 'os';
+import { emulator } from '../../emulator';
+import { getSettings, dispatch } from '../../settings';
+import { IGenericActivity } from '../../../types/activityTypes';
+import { IAttachment } from '../../../types/attachmentTypes';
+import { IAttachmentData } from '../../../types/attachmentTypes';
+import { AttachmentsController } from '../connector/attachmentsController';
+import * as log from '../../log';
 import * as Fs from 'fs';
-import { RestServer } from '../restServer';
+import * as Formidable from 'formidable';
+import { RestServer } from '../../restServer';
+import { jsonBodyParser } from '../../jsonBodyParser';
+import { usersDefault } from '../../../types/serverSettingsTypes';
 
 
 export class ConversationsControllerV3 {
 
     static registerRoutes(server: RestServer) {
         server.router.opts('/v3/directline', this.options);
-        server.router.post('/v3/directline/conversations', this.startConversation);
+        server.router.post('/v3/directline/conversations', jsonBodyParser(), this.startConversation);
         server.router.get('/v3/directline/conversations/:conversationId', this.reconnectToConversation);
         server.router.get('/v3/directline/conversations/:conversationId/activities/', this.getActivities);
-        server.router.post('/v3/directline/conversations/:conversationId/activities', this.postActivity);
+        server.router.post('/v3/directline/conversations/:conversationId/activities', jsonBodyParser(), this.postActivity);
         server.router.post('/v3/directline/conversations/:conversationId/upload', this.upload);
         server.router.get('/v3/directline/conversations/:conversationId/stream', this.stream);
     }
@@ -69,13 +70,36 @@ export class ConversationsControllerV3 {
             let created = false;
             const auth = req.header('Authorization');
             const tokenMatch = /Bearer\s+(.+)/.exec(auth);
-            let conversation = emulator.conversations.conversationById(activeBot.botId, tokenMatch[1]);
+            const conversationId = tokenMatch[1];
+            const users = getSettings().users;
+            let currentUser = users.usersById[users.currentUserId];
+            // TODO: This is a band-aid until state system cleanup
+            if (!currentUser) {
+                currentUser = usersDefault.usersById['default-user'];
+                dispatch({
+                    type: 'Users_SetCurrentUser',
+                    state: {
+                        user: currentUser
+                    }
+                })
+            }
+            let conversation = emulator.conversations.conversationById(activeBot.botId, conversationId);
             if (!conversation) {
-                const users = getSettings().users;
-                const currentUser = users.usersById[users.currentUserId];
-                conversation = emulator.conversations.newConversation(activeBot.botId, currentUser);
-                conversation.sendBotAddedToConversation();
+                conversation = emulator.conversations.newConversation(activeBot.botId, currentUser, conversationId);
+                // Send "bot added to conversation"
+                conversation.sendConversationUpdate([{ id: activeBot.botId, name: "Bot" }], undefined);
+                // Send "user added to conversation"
+                conversation.sendConversationUpdate([currentUser], undefined);
                 created = true;
+            } else {
+                if (conversation.members.findIndex((user) => user.id == activeBot.botId) === -1) {
+                    // Sends "bot added to conversation"
+                    conversation.addMember(activeBot.botId, "Bot");
+                }
+                if (conversation.members.findIndex((user) => user.id == currentUser.id) === -1) {
+                    // Sends "user added to conversation"
+                    conversation.addMember(currentUser.id, currentUser.name);
+                }
             }
             res.json(created ? HttpStatus.CREATED : HttpStatus.OK, {
                 conversationId: conversation.conversationId,
@@ -140,7 +164,6 @@ export class ConversationsControllerV3 {
             const conversation = emulator.conversations.conversationById(activeBot.botId, req.params.conversationId);
             if (conversation) {
                 const activity = <IGenericActivity>req.body;
-                activity.serviceUrl = emulator.framework.serviceUrl;
                 conversation.postActivityToBot(activity, true, (err, statusCode, activityId) => {
                     if (err || !/^2\d\d$/.test(`${statusCode}`)) {
                         res.send(statusCode || HttpStatus.INTERNAL_SERVER_ERROR);
@@ -161,57 +184,69 @@ export class ConversationsControllerV3 {
         }
     }
 
+
     static upload = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
-        // TODO: Combine multiple uploads into a single message. Restify calls upload for each one in the multipart/form-data in this naive implementation.
         const settings = getSettings();
         const activeBot = settings.getActiveBot();
-        const currentUser = settings.users.usersById[settings.users.currentUserId];
         if (activeBot) {
             const conversation = emulator.conversations.conversationById(activeBot.botId, req.params.conversationId);
             if (conversation) {
-                if (req.files && req.files['file']) {
-                    const fileSpec: any = req.files['file'];
-                    log.info('upload', fileSpec.type, fileSpec.name);
-                    const buf: Buffer = Fs.readFileSync(fileSpec.path);
-
-                    const contentBase64 = buf.toString('base64');
-                    const attachment: IAttachmentData = {
-                        type: fileSpec.type,
-                        name: fileSpec.name,
-                        originalBase64: contentBase64,
-                        thumbnailBase64: contentBase64
-                    }
-
-                    const attachmentId = AttachmentsController.uploadAttachment(attachment);
-
-                    const activity: IGenericActivity = {
-                        type: "message",
-                        from: {
-                            name: currentUser.name,
-                            id: currentUser.id
-                        },
-                        attachments: [
-                            {
-                                contentType: fileSpec.type,
-                                name: fileSpec.name,
-                                contentUrl: `${emulator.framework.serviceUrl}/v3/attachments/${attachmentId}/views/original`
-                            }
-                        ],
-                        serviceUrl: emulator.framework.serviceUrl
-                    }
-                    conversation.postActivityToBot(activity, true, (err, statusCode, activityId) => {
-                        if (err || !/^2\d\d$/.test(`${statusCode}`)) {
-                            res.send(statusCode || HttpStatus.INTERNAL_SERVER_ERROR);
-                        } else {
-                            res.send(statusCode, { id: activityId });
-                        }
-                        res.end();
-                    });
-                } else {
-                    res.send(HttpStatus.BAD_REQUEST, "no file uploaded");
-                    log.error("DirectLine: Cannot post activity. No file uploaded");
-                    res.end();
+                if (req.getContentType() !== 'multipart/form-data' ||
+                    (req.getContentLength() === 0 && !req.isChunked())) {
+                    return undefined;
                 }
+                var form = new Formidable.IncomingForm();
+                form.multiples = true;
+                form.keepExtensions = true;
+                // TODO: Override form.onPart handler so it doesn't write temp files to disk.
+                form.parse(req, (err: any, fields: any, files: any) => {
+                    try {
+                        const activity = JSON.parse(Fs.readFileSync(files.activity.path, 'utf8'));
+                        let uploads = files.file;
+                        if (!Array.isArray(uploads))
+                            uploads = [uploads];
+                        if (uploads && uploads.length) {
+                            activity.attachments = [];
+                            uploads.forEach((upload) => {
+                                const name = (upload as any).name || 'file.dat';
+                                const type = upload.type;
+                                const path = upload.path;
+                                const buf: Buffer = Fs.readFileSync(path);
+                                const contentBase64 = buf.toString('base64');
+                                const attachmentData: IAttachmentData = {
+                                    type,
+                                    name,
+                                    originalBase64: contentBase64,
+                                    thumbnailBase64: contentBase64
+                                }
+                                const attachmentId = AttachmentsController.uploadAttachment(attachmentData);
+                                const attachment: IAttachment = {
+                                    name,
+                                    contentType: type,
+                                    contentUrl: `${emulator.framework.getServiceUrl(activeBot.botUrl)}/v3/attachments/${attachmentId}/views/original`
+                                }
+                                activity.attachments.push(attachment);
+                            });
+
+                            conversation.postActivityToBot(activity, true, (err, statusCode, activityId) => {
+                                if (err || !/^2\d\d$/.test(`${statusCode}`)) {
+                                    res.send(statusCode || HttpStatus.INTERNAL_SERVER_ERROR);
+                                } else {
+                                    res.send(statusCode, { id: activityId });
+                                }
+                                res.end();
+                            });
+                        } else {
+                            res.send(HttpStatus.BAD_REQUEST, "no file uploaded");
+                            log.error("DirectLine: Cannot post activity. No file uploaded");
+                            res.end();
+                        }
+                    } catch (e) {
+                        res.send(HttpStatus.INTERNAL_SERVER_ERROR, "error processing uploads");
+                        log.error("DirectLine: Failed to post activity. No files uploaded");
+                        res.end();
+                    }
+                });
             } else {
                 res.send(HttpStatus.NOT_FOUND, "conversation not found");
                 log.error("DirectLine: Cannot post activity. Conversation not found");

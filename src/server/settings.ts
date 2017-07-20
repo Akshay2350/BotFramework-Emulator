@@ -32,16 +32,13 @@
 //
 
 import * as Electron from 'electron';
-import * as Os from 'os';
-import { Store, Reducer, Dispatch, createStore, combineReducers, Action } from 'redux';
+import { Store, createStore, combineReducers, Action } from 'redux';
 import { frameworkReducer } from './reducers/frameworkReducer';
 import { botsReducer, activeBotReducer } from './reducers/botReducer';
 import { windowStateReducer } from './reducers/windowStateReducer';
 import { usersReducer } from './reducers/usersReducer';
-import { frameworkDefault } from '../types/serverSettingsTypes';
 import { loadSettings, saveSettings } from '../utils';
 import { IBot } from '../types/botTypes';
-import { logReady } from './log';
 import {
     IFrameworkSettings,
     IWindowStateSettings,
@@ -116,12 +113,6 @@ export const addSettingsListener = (actor: SettingsActor) => {
 
 
 export const startup = () => {
-    Electron.ipcMain.on('logStarted', () => {
-        logReady(true);
-    });
-    Electron.ipcMain.on('logStopped', () => {
-        logReady(false);
-    });
     // Listen for settings change requests from the client.
     Electron.ipcMain.on('serverChangeSetting', (event, ...args) => {
         // Apply change requests to the settings store.
@@ -149,10 +140,22 @@ export const startup = () => {
 }
 
 export const authenticationSettings = {
-    refreshEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-    refreshScope: 'https://graph.microsoft.com/.default',
-    msaOpenIdMetadata: 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
-    msaIssuer: 'https://sts.windows.net/72f988bf-86f1-41af-91ab-2d7cd011db47/',
-    msaAudience: 'https://graph.microsoft.com',
+    tokenEndpoint: 'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token',
+    openIdMetadata: 'https://login.microsoftonline.com/botframework.com/v2.0/.well-known/openid-configuration',
+    tokenIssuer: 'https://sts.windows.net/d6d49420-f39b-4df7-a1dc-d59a935871db/',
+    tokenAudience: 'https://api.botframework.com',
     stateEndpoint: 'https://state.botframework.com'
+}
+
+export const v30AuthenticationSettings = {
+    tokenEndpoint: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    tokenScope: 'https://graph.microsoft.com/.default',
+    openIdMetadata: 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
+    tokenIssuer: 'https://sts.windows.net/72f988bf-86f1-41af-91ab-2d7cd011db47/',
+    tokenAudience: 'https://graph.microsoft.com',
+    stateEndpoint: 'https://state.botframework.com'
+}
+
+export const speechSettings = {
+    tokenEndpoint: 'https://login.botframework.com/v3/speechtoken'
 }

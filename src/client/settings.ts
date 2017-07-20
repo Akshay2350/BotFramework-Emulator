@@ -32,25 +32,26 @@
 //
 
 import * as Electron from 'electron';
-import { Store, createStore, combineReducers, Reducer, Action } from 'redux';
-import { Subscription, BehaviorSubject } from '@reactivex/rxjs';
+import { Store, createStore, combineReducers, Action } from 'redux';
+import { BehaviorSubject } from 'rxjs';
 import { ActivityOrID } from '../types/activityTypes';
-import { ISettings as IServerSettings, Settings as ServerSettings } from '../types/serverSettingsTypes';
-import { InspectorActions } from './reducers';
+import { Settings as ServerSettings } from '../types/serverSettingsTypes';
+import { InspectorActions, ConversationActions } from './reducers';
 import { loadSettings, saveSettings } from '../utils';
 import {
     layoutReducer,
     addressBarReducer,
     conversationReducer,
     logReducer,
+    wordWrapReducer,
     inspectorReducer,
     serverSettingsReducer,
     ServerSettingsActions,
     AddressBarActions
 } from './reducers';
-import { IBot, newBot } from '../types/botTypes';
-import { uniqueId } from '../utils';
+import { IBot } from '../types/botTypes';
 import * as log from './log';
+import { Emulator } from './emulator';
 
 
 export const selectedActivity$ = (): BehaviorSubject<ActivityOrID> => {
@@ -67,6 +68,10 @@ export const deselectActivity = () => {
 export interface ILayoutState {
     horizSplit?: number | string,
     vertSplit?: number | string,
+}
+
+export interface IWordWrapState {
+    wordwrap?: boolean
 }
 
 export interface IAddressBarState {
@@ -94,16 +99,21 @@ export interface IInspectorState {
 }
 
 export interface IPersistentSettings {
-    layout?: ILayoutState
+    layout?: ILayoutState,
+    wordwrap?: IWordWrapState
 }
 
 export class PersistentSettings implements IPersistentSettings {
     layout: ILayoutState;
+    wordwrap: IWordWrapState;
     constructor(settings: ISettings) {
         Object.assign(this, {
             layout: {
                 horizSplit: settings.layout.horizSplit,
                 vertSplit: settings.layout.vertSplit
+            },
+            wordwrap: {
+                wordwrap: settings.wordwrap.wordwrap
             }
         });
     }
@@ -124,6 +134,7 @@ export class Settings implements ISettings {
     log: ILogState;
     inspector: IInspectorState;
     serverSettings: ServerSettings;
+    wordwrap: IWordWrapState;
 
     constructor(settings?: ISettings) {
         Object.assign(this, settings);
@@ -155,6 +166,10 @@ export const logDefault: ILogState = {
     autoscroll: true
 }
 
+export const wordWrapDefault: IWordWrapState = {
+    wordwrap: false
+}
+
 export const inspectorDefault: IInspectorState = {
     selectedObject: null
 }
@@ -164,6 +179,7 @@ export const settingsDefault: ISettings = {
     addressBar: addressBarDefault,
     conversation: conversationDefault,
     log: logDefault,
+    wordwrap: wordWrapDefault,
     inspector: inspectorDefault,
     serverSettings: new ServerSettings()
 }
@@ -179,6 +195,7 @@ const getStore = (): Store<ISettings> => {
             addressBar: addressBarReducer,
             conversation: conversationReducer,
             log: logReducer,
+            wordwrap: wordWrapReducer,
             inspector: inspectorReducer,
             serverSettings: serverSettingsReducer
         }), initialSettings);
@@ -229,8 +246,7 @@ export const startup = () => {
 
     // Listen for new settings from the server.
     Electron.ipcRenderer.on('serverSettings', (event, ...args) => {
-        const serverSettings = new ServerSettings((args[0][0]));
-        //console.info("Received new server state.", serverSettings);
+        const serverSettings = new ServerSettings(args[0]);
         ServerSettingsActions.set(serverSettings);
     });
     // Listen for log messages from the server.
@@ -255,6 +271,12 @@ export const startup = () => {
     Electron.ipcRenderer.on('show-about', () => {
         AddressBarActions.showAbout()
     });
+    Electron.ipcRenderer.on('new-conversation', (event, ...args) => {
+        ConversationActions.newConversation(args[0]);
+    });
+    Electron.ipcRenderer.on('listening', (event, ...args) => {
+        Emulator.serviceUrl = args[0].serviceUrl;
+    });
 
     // Let the server know we're done starting up. In response, it will send us it's current settings (bot list and such).
     Electron.ipcRenderer.send('clientStarted');
@@ -262,6 +284,7 @@ export const startup = () => {
 
 /**
  * Sends settings change requests to the server.
+ * TODO: Pass this through the Emulator REST API rather than IPC (for future headless emulator support).
  */
 export const serverChangeSetting = (action: string, state) => {
     Electron.ipcRenderer.send('serverChangeSetting', action, state);

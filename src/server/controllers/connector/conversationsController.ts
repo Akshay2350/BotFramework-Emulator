@@ -32,20 +32,21 @@
 //
 
 import * as Restify from 'restify';
-import { IGenericActivity, IConversationParameters } from '../../types/activityTypes';
-import { IUser } from '../../types/userTypes';
-import { getSettings, getStore } from '../settings';
-import { emulator } from '../emulator';
-import { uniqueId } from '../../utils';
+import { IGenericActivity, IConversationParameters } from '../../../types/activityTypes';
+import { IUser } from '../../../types/userTypes';
+import { getSettings, getStore } from '../../settings';
+import { Emulator, emulator } from '../../emulator';
 import * as HttpStatus from "http-status-codes";
-import * as ResponseTypes from '../../types/responseTypes';
-import { ErrorCodes, IResourceResponse, IErrorResponse } from '../../types/responseTypes';
-import { IAttachmentData, IAttachmentInfo, IAttachmentView } from '../../types/attachmentTypes';
+import * as ResponseTypes from '../../../types/responseTypes';
+import { ErrorCodes, IResourceResponse } from '../../../types/responseTypes';
+import { IAttachmentData } from '../../../types/attachmentTypes';
 import { AttachmentsController } from './attachmentsController';
-import * as log from '../log';
-import { RestServer } from '../restServer';
-import { BotFrameworkAuthentication } from '../botFrameworkAuthentication';
-import { error } from '../log';
+import * as log from '../../log';
+import { RestServer } from '../../restServer';
+import { BotFrameworkAuthentication } from '../../botFrameworkAuthentication';
+import { error } from '../../log';
+import { jsonBodyParser } from '../../jsonBodyParser';
+import { VersionManager } from '../../versionManager';
 
 
 interface IConversationAPIPathParameters {
@@ -56,33 +57,35 @@ interface IConversationAPIPathParameters {
 export class ConversationsController {
 
     public static registerRoutes(server: RestServer, auth: BotFrameworkAuthentication) {
-        server.router.post('/v3/conversations', auth.verifyBotFramework, this.createConversation);
-        server.router.post('/v3/conversations/:conversationId/activities', auth.verifyBotFramework, this.sendToConversation);
-        server.router.post('/v3/conversations/:conversationId/activities/:activityId', auth.verifyBotFramework, this.replyToActivity);
-        server.router.put('/v3/conversations/:conversationId/activities/:activityId', auth.verifyBotFramework, this.updateActivity);
+        server.router.post('/v3/conversations', [auth.verifyBotFramework], jsonBodyParser(), [this.createConversation]);
+        server.router.post('/v3/conversations/:conversationId/activities', [auth.verifyBotFramework], jsonBodyParser(), [this.sendToConversation]);
+        server.router.post('/v3/conversations/:conversationId/activities/:activityId', [auth.verifyBotFramework], jsonBodyParser(), [this.replyToActivity]);
+        server.router.put('/v3/conversations/:conversationId/activities/:activityId', [auth.verifyBotFramework], jsonBodyParser(), [this.updateActivity]);
         server.router.del('/v3/conversations/:conversationId/activities/:activityId', auth.verifyBotFramework, this.deleteActivity);
         server.router.get('/v3/conversations/:conversationId/members', auth.verifyBotFramework, this.getConversationMembers);
         server.router.get('/v3/conversations/:conversationId/activities/:activityId/members', auth.verifyBotFramework, this.getActivityMembers);
-        server.router.post('/v3/conversations/:conversationId/attachments', auth.verifyBotFramework, this.uploadAttachment);
+        server.router.post('/v3/conversations/:conversationId/attachments', [auth.verifyBotFramework], jsonBodyParser(), [this.uploadAttachment]);
     }
 
     // Create conversation API
     public static createConversation = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
         let conversationParameters = <IConversationParameters>req.body;
         try {
-            console.log("framework: newConversation");
-
+            const settings = getSettings();
             // look up bot
-            const activeBot = getSettings().getActiveBot();
+            const activeBot = settings.getActiveBot();
             if (!activeBot)
                 throw ResponseTypes.createAPIException(HttpStatus.NOT_FOUND, ErrorCodes.BadArgument, "bot not found");
 
-            const users = getSettings().users;
+            const users = settings.users;
             if (conversationParameters.members == null)
                 throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.MissingProperty, "members missing");
 
             if (conversationParameters.members.length != 1)
                 throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadSyntax, "Emulator only supports creating conversation with 1 user");
+
+            if (conversationParameters.members[0].id !== settings.users.currentUserId)
+                throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadSyntax, "Emulator only supports creating conversation with the current user");
 
             if (conversationParameters.bot == null)
                 throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.MissingProperty, "missing Bot property");
@@ -104,8 +107,13 @@ export class ConversationsController {
                 state: { users: newUsers }
             });
 
-
-            let newConversation = emulator.conversations.newConversation(activeBot.botId, users.usersById[conversationParameters.members[0].id]);
+            let newConversation;
+            if (conversationParameters.conversationId) {
+                newConversation = emulator.conversations.conversationById(activeBot.botId, conversationParameters.conversationId);
+            }
+            if (!newConversation) {
+                newConversation = emulator.conversations.newConversation(activeBot.botId, users.usersById[conversationParameters.members[0].id], conversationParameters.conversationId);
+            }
             let activityId: string = null;
             if (conversationParameters.activity != null) {
                 // set routing information for new conversation
@@ -121,6 +129,9 @@ export class ConversationsController {
             res.send(HttpStatus.OK, response);
             res.end();
             log.api('createConversation', req, res, conversationParameters, response, getActivityText(conversationParameters.activity));
+
+            // Tell the client side to start a new conversation.
+            Emulator.send('new-conversation', newConversation.conversationId);
         } catch (err) {
             var error = ResponseTypes.sendErrorResponse(req, res, next, err);
             log.api('createConversation', req, res, conversationParameters, error, getActivityText(conversationParameters.activity));
@@ -132,18 +143,14 @@ export class ConversationsController {
         let activity = <IGenericActivity>req.body;
         try {
             const parms: IConversationAPIPathParameters = req.params;
-            console.log("framework: sendToConversation", JSON.stringify(activity));
 
             // look up bot
             const activeBot = getSettings().getActiveBot();
             if (!activeBot)
                 throw ResponseTypes.createAPIException(HttpStatus.NOT_FOUND, ErrorCodes.BadArgument, "bot not found");
 
+            activity.id = null;
             activity.replyToId = req.params.activityId;
-
-            // validate conversation
-            if (activity.conversation.id != parms.conversationId)
-                throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadArgument, "uri conversation id does not match payload");
 
             // look up conversation
             const conversation = emulator.conversations.conversationById(activeBot.botId, parms.conversationId);
@@ -155,7 +162,6 @@ export class ConversationsController {
             res.send(HttpStatus.OK, response);
             res.end();
             log.api(`Send[${activity.type}]`, req, res, activity, response, getActivityText(activity));
-            return;
         } catch (err) {
             let error = ResponseTypes.sendErrorResponse(req, res, next, err);
             log.api(`Send[${activity.type}]`, req, res, activity, error, getActivityText(activity));
@@ -167,18 +173,16 @@ export class ConversationsController {
         let activity = <IGenericActivity>req.body;
         try {
             const parms: IConversationAPIPathParameters = req.params;
-            console.log("framework: replyToActivity", JSON.stringify(activity));
 
             // look up bot
             const activeBot = getSettings().getActiveBot();
             if (!activeBot)
                 throw ResponseTypes.createAPIException(HttpStatus.NOT_FOUND, ErrorCodes.BadArgument, "bot not found");
 
-            activity.replyToId = req.params.activityId;
+            VersionManager.checkVersion(req.header("User-agent"));
 
-            // validate conversation
-            //if (activity.conversation.id != parms.conversationId)
-            //    throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadArgument, "uri conversation id does not match payload");
+            activity.id = null;
+            activity.replyToId = req.params.activityId;
 
             // look up conversation
             const conversation = emulator.conversations.conversationById(activeBot.botId, parms.conversationId);
@@ -194,7 +198,6 @@ export class ConversationsController {
             res.send(HttpStatus.OK, response);
             res.end();
             log.api(`Reply[${activity.type}]`, req, res, activity, response, getActivityText(activity));
-            return;
         } catch (err) {
             let error = ResponseTypes.sendErrorResponse(req, res, next, err);
             log.api(`Reply[${activity.type}]`, req, res, activity, error, getActivityText(activity));
@@ -206,7 +209,6 @@ export class ConversationsController {
         let activity = <IGenericActivity>req.body;
         try {
             const parms: IConversationAPIPathParameters = req.params;
-            console.log("framework: updateActivity", JSON.stringify(activity));
 
             // look up bot
             const activeBot = getSettings().getActiveBot();
@@ -214,10 +216,6 @@ export class ConversationsController {
                 throw ResponseTypes.createAPIException(HttpStatus.NOT_FOUND, ErrorCodes.BadArgument, "bot not found");
 
             activity.replyToId = req.params.activityId;
-
-            // validate conversation
-            if (activity.conversation.id != parms.conversationId)
-                throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadArgument, "uri conversation id does not match payload conversation id");
 
             if (activity.id != parms.activityId)
                 throw ResponseTypes.createAPIException(HttpStatus.BAD_REQUEST, ErrorCodes.BadArgument, "uri activity id does not match payload activity id");
@@ -232,7 +230,6 @@ export class ConversationsController {
             res.send(HttpStatus.OK, response);
             res.end();
             log.api(`Update[${activity.id}]`, req, res, activity, response, getActivityText(activity));
-            return;
         } catch (err) {
             let error = ResponseTypes.sendErrorResponse(req, res, next, err);
             log.api(`Update[${activity.id}]`, req, res, activity, error, getActivityText(activity));
@@ -243,8 +240,6 @@ export class ConversationsController {
     public static deleteActivity = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
         const parms: IConversationAPIPathParameters = req.params;
         try {
-            console.log("framework: deleteActivity", JSON.stringify(parms));
-
             // look up bot
             const activeBot = getSettings().getActiveBot();
             if (!activeBot)
@@ -260,7 +255,6 @@ export class ConversationsController {
             res.send(HttpStatus.OK);
             res.end();
             log.api(`DeleteActivity(${parms.activityId})`, req, res);
-            return;
         } catch (err) {
             let error = ResponseTypes.sendErrorResponse(req, res, next, err);
             log.api(`DeleteActivity(${parms.activityId})`, req, res, null, error);
@@ -269,7 +263,6 @@ export class ConversationsController {
 
     // get members of a conversation
     public static getConversationMembers = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
-        console.log("framework: getConversationMembers");
         const parms: IConversationAPIPathParameters = req.params;
         try {
             // look up bot
@@ -294,15 +287,12 @@ export class ConversationsController {
 
     // get members of an activity
     public static getActivityMembers = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
-        console.log("framework: getActivityMembers");
         const parms: IConversationAPIPathParameters = req.params;
         try {
             // look up bot
             const activeBot = getSettings().getActiveBot();
             if (!activeBot)
                 throw ResponseTypes.createAPIException(HttpStatus.NOT_FOUND, ErrorCodes.BadArgument, "bot not found");
-
-            let activity = <IGenericActivity>req.body;
 
             // look up conversation
             const conversation = emulator.conversations.conversationById(activeBot.botId, parms.conversationId);
@@ -320,7 +310,6 @@ export class ConversationsController {
 
     // upload attachment
     public static uploadAttachment = (req: Restify.Request, res: Restify.Response, next: Restify.Next): any => {
-        console.log("framework: uploadAttachment");
         let attachmentData = <IAttachmentData>req.body;
         try {
             // look up bot
@@ -352,7 +341,7 @@ function getActivityText(activity: IGenericActivity): string {
         if (activity.attachments && activity.attachments.length > 0)
             return activity.attachments[0].contentType;
         else {
-            if (activity.text.length > 50)
+            if (activity.text && activity.text.length > 50)
                 return activity.text.substring(0, 50) + '...';
 
             return activity.text;

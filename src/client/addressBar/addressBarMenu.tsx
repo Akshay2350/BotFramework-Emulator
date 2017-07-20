@@ -32,26 +32,25 @@
 //
 
 import * as React from 'react';
-import { getSettings, ISettings, addSettingsListener } from '../settings';
-import { Settings as ServerSettings } from '../../types/serverSettingsTypes';
-import { AddressBarActions, ConversationActions, ServerSettingsActions } from '../reducers';
-import { IBot, newBot } from '../../types/botTypes';
-import * as log from '../log';
-import { AddressBarOperators } from './addressBarOperators';
+import { getSettings } from '../settings';
+import { AddressBarActions, ConversationActions } from '../reducers';
+import { Emulator } from '../emulator';
 import * as Constants from '../constants';
-import { remote, app, shell } from 'electron';
+import { remote } from 'electron';
 
-const { Menu, MenuItem } = remote;
+const { Menu } = remote;
 
 export class AddressBarMenu extends React.Component<{}, {}> {
 
     showMenu() {
         const settings = getSettings();
-        const template: Electron.MenuItemOptions[] = [
+        const inConversation = ((settings.serverSettings.activeBot || '').length > 0 && (settings.conversation.conversationId || '').length > 0);
+        const haveActiveBot = (settings.serverSettings.activeBot || '').length > 0;
+        const template: Electron.MenuItemConstructorOptions[] = [
             {
                 label: 'New Conversation',
                 click: () => ConversationActions.newConversation(),
-                enabled: (settings.serverSettings.activeBot || '').length > 0
+                enabled: haveActiveBot
             },
             /*
             {
@@ -66,34 +65,74 @@ export class AddressBarMenu extends React.Component<{}, {}> {
             },
             */
             {
-                label: 'End Conversation',
-                click: () => {
-                    ConversationActions.endConversation();
-                },
-                enabled: ((settings.serverSettings.activeBot || '').length > 0 && (settings.conversation.conversationId || '').length > 0)
+                label: 'Conversation',
+                type: 'submenu',
+                enabled: inConversation,
+                submenu: [
+                    {
+                        label: 'Send System Activity',
+                        type: 'submenu',
+                        enabled: true,
+                        submenu: [
+                            {
+                                label: 'conversationUpdate (user added)',
+                                click: () => {
+                                    Emulator.addUser();
+                                }
+                            },
+                            {
+                                label: 'conversationUpdate (user removed)',
+                                click: () => {
+                                    Emulator.removeRandomUser();
+                                }
+                            },
+                            {
+                                label: 'contactRelationUpdate (bot added)',
+                                click: () => {
+                                    Emulator.botContactAdded();
+                                }
+                            },
+                            {
+                                label: 'contactRelationUpdate (bot removed)',
+                                click: () => {
+                                    Emulator.botContactRemoved();
+                                }
+                            },
+                            {
+                                label: 'typing',
+                                click: () => {
+                                    Emulator.typing();
+                                }
+                            },
+                            {
+                                label: 'ping',
+                                click: () => {
+                                    Emulator.ping();
+                                }
+                            },
+                            {
+                                label: 'deleteUserData',
+                                click: () => {
+                                    Emulator.deleteUserData();
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        type: 'separator'
+                    },
+                    {
+                        label: 'End Conversation',
+                        click: () => {
+                            ConversationActions.endConversation();
+                        }
+                    }
+                ]
             },
             /*
             {
                 label: 'Manage Users...',
                 click: () => AddressBarActions.showConversationSettings()
-            },
-            */
-            /*
-            {
-                label: 'Send System Activity',
-                type: 'submenu',
-                submenu: [
-                    {
-                        label: 'Ping',
-                        click: () => this.sendPingActivity(),
-                        enabled: false
-                    },
-                    {
-                        label: 'Typing',
-                        click: () => this.sendTypingActivity(),
-                        enabled: false
-                    }
-                ]
             },
             */
             {
@@ -102,6 +141,37 @@ export class AddressBarMenu extends React.Component<{}, {}> {
             {
                 label: 'App Settings',
                 click: () => AddressBarActions.showAppSettings()
+            },
+            {
+                type: 'separator'
+            },
+            {
+                label: 'Zoom',
+                type: 'submenu',
+                enabled: true,
+                submenu: [
+                    {
+                        label: 'Zoom In',
+                        accelerator: 'CommandOrControl+=',
+                        click: () => {
+                            Emulator.zoomIn();
+                        }
+                    },
+                    {
+                        label: 'Zoom Out',
+                        accelerator: 'CommandOrControl+-',
+                        click: () => {
+                            Emulator.zoomOut();
+                        }
+                    },
+                    {
+                        label: 'Reset Zoom',
+                        accelerator: 'CommandOrControl+0',
+                        click: () => {
+                            Emulator.zoomReset();
+                        }
+                    },
+                ]
             },
             {
                 type: 'separator'
@@ -129,14 +199,14 @@ export class AddressBarMenu extends React.Component<{}, {}> {
             },
             {
                 label: 'Credits',
-                click: () => window.open('https://github.com/Microsoft/BotFramework-Emulator/blob/master/ThirdPartyLicenses.txt')
+                click: () => window.open('https://aka.ms/l7si1g')
             },
             {
                 type: 'separator'
             },
             {
                 label: 'Report issues',
-                click: () => window.open('https://github.com/Microsoft/BotFramework-Emulator/issues/new')
+                click: () => window.open('https://aka.ms/cy106f')
             },
         ];
 

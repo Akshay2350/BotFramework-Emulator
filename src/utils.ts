@@ -40,7 +40,7 @@ import * as url from 'url';
 /**
  * Generates a random id that is unique enough for our purposes.
  */
-export const uniqueId = () => Math.random().toString(24).slice(2);
+export const uniqueId = (length?: number) => Math.random().toString(24).substr(2, length);
 
 const ensureStoragePath = (): string => {
     const app = Electron.app || Electron.remote.app;
@@ -111,4 +111,48 @@ export const isLocalhostUrl = (urlStr: string) => {
 export const isSecuretUrl = (urlStr: string) => {
     const parsedUrl = url.parse(urlStr);
     return (parsedUrl.protocol.startsWith('https'));
+}
+
+export const safeStringify = (o: any, space: string | number = undefined): string => {
+    let cache = [];
+    if (typeof o !== 'object')
+        return `${o}`;
+    return JSON.stringify(o, function (key, value) {
+        if (typeof value === 'object' && value !== null) {
+            if (cache.indexOf(value) !== -1) {
+                return;
+            }
+            cache.push(value);
+        }
+        return value;
+    }, space);
+}
+
+export const approximateObjectSize = (object: any, cache:any[] = []) => {
+    switch (typeof object) {
+        case 'boolean':
+            return 4;
+        case 'number':
+            return 8;
+        case 'string':
+            return object.length * 2;
+        case 'object':
+            let bytes = 0;
+            cache.push(object);
+            for (let i in object) {
+                let value = object[i];
+                //check for infinite recursion
+                if (typeof value === 'object' && value !== null) {
+                    if (cache.indexOf(value) !== -1) {
+                        continue;
+                    }
+                    cache.push(value);
+                }
+                bytes += approximateObjectSize(value, cache);
+            }
+            return bytes;
+        default:
+            //value is null, undefined, or a function
+            return 0;
+    }
 }

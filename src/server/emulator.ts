@@ -31,32 +31,74 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+var http = require('http');
+var https = require('https');
+var ElectronProxyAgent = require('electron-proxy-agent');
+
 import { BotFrameworkService } from './botFrameworkService';
 import { ConversationManager } from './conversationManager';
 import * as Settings from './settings';
 import * as Electron from 'electron';
-import { mainWindow } from './main';
+import { windowManager, mainWindow } from './main';
 
+
+interface IQueuedMessage {
+    channel: any,
+    args: any[]
+}
 
 /**
  * Top-level state container for the Node process.
  */
 export class Emulator {
-    mainWindow: Electron.BrowserWindow;
     framework = new BotFrameworkService();
     conversations = new ConversationManager();
+    proxyAgent: any;
+    static queuedMessages: IQueuedMessage[] = [];
 
     constructor() {
         // When the client notifies us it has started up, send it the configuration.
         // Note: We're intentionally sending and ISettings here, not a Settings. This
         // is why we're getting the value from getStore().getState().
         Electron.ipcMain.on('clientStarted', () => {
-            this.mainWindow = mainWindow;
-            this.send('serverSettings', Settings.getStore().getState());
+            // Use system proxy settings for outgoing requests
+            const session = Electron.session.defaultSession;
+            this.proxyAgent = new ElectronProxyAgent(session);
+            http.globalAgent = this.proxyAgent;
+            https.globalAgent = this.proxyAgent;
+            windowManager.addMainWindow(mainWindow);
+            Emulator.queuedMessages.forEach((msg) => {
+                Emulator.send(msg.channel, ...msg.args);
+            });
+            Emulator.queuedMessages = [];
+            Emulator.send('serverSettings', Settings.getStore().getState());
         });
         Settings.addSettingsListener(() => {
-            this.send('serverSettings', Settings.getStore().getState());
+            Emulator.send('serverSettings', Settings.getStore().getState());
         });
+
+        Electron.ipcMain.on('getSpeechToken', (event, args: string) => {
+            // args is the conversation id
+            this.getSpeechToken(event, args);
+        });
+
+        Electron.ipcMain.on('refreshSpeechToken', (event, args: string) => {
+            // args is the conversation id
+            this.getSpeechToken(event, args, true);
+        });
+    }
+
+    private getSpeechToken(event: Electron.Event, conversationId: string, refresh: boolean = false) {
+        const settings = Settings.getSettings();
+        const activeBot = settings.getActiveBot();
+        if (activeBot && activeBot.botId && conversationId) {
+            let conversation = this.conversations.conversationById(activeBot.botId, conversationId);
+            conversation.getSpeechToken(10, (tokenInfo) => {
+                event.returnValue = tokenInfo;
+            }, refresh);
+        } else {
+            event.returnValue = { error: 'No bot', error_Description: 'To use speech, you must connect to a bot and have an active conversation.'};
+        }
     }
 
     /**
@@ -65,14 +107,17 @@ export class Emulator {
     static startup() {
         Settings.startup();
         emulator = new Emulator();
+        emulator.framework.startup();
     }
 
     /**
      * Sends a command to the client.
      */
-    send(channel: string, ...args: any[]) {
-        if (this.mainWindow) {
-            this.mainWindow.webContents.send(channel, args);
+    static send(channel: string, ...args: any[]) {
+        if (windowManager && windowManager.hasMainWindow()) {
+            windowManager.getMainWindow().webContents.send(channel, ...args);
+        } else {
+            Emulator.queuedMessages.push({ channel, args})
         }
     }
 }

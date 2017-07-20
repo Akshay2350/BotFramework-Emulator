@@ -36,18 +36,16 @@ import { IUser } from '../types/userTypes';
 
 
 export interface IFrameworkSettings {
-    // port for emulator to listen on
-    port?: number,
-
     // path to use for ngrok
     ngrokPath?: string,
-    ngrokServiceUrl?: string,
-    ngrokRunning?: boolean,
-
-    serviceUrl?: string
+    // option for deciding whether to bypass ngrok for bots on localhost
+    bypassNgrokLocalhost?: boolean,
+    stateSizeLimit?: number,
 }
 
 export interface IWindowStateSettings {
+    displayId?: number,
+    zoomLevel?: number,
     top?: number,
     left?: number,
     width?: number,
@@ -63,7 +61,7 @@ export interface IPersistentSettings {
     framework?: IFrameworkSettings,
     bots?: IBot[],
     windowState?: IWindowStateSettings,
-    users: IUserSettings
+    users?: IUserSettings
 }
 
 export interface ISettings extends IPersistentSettings {
@@ -86,19 +84,18 @@ export class Settings implements ISettings {
     }
 
     public botById(botId: string): IBot {
-        return this.bots.find(value => value.botId === botId);
+        return this.bots ? this.bots.find(value => value.botId === botId) : undefined;
     }
 }
 
 export const frameworkDefault: IFrameworkSettings = {
-    port: 9002,
     ngrokPath: '',
-    serviceUrl: '',
-    ngrokRunning: false,
-    ngrokServiceUrl: ''
+    bypassNgrokLocalhost: true,
+    stateSizeLimit: 64
 }
 
 export const windowStateDefault: IWindowStateSettings = {
+    zoomLevel: 0,
     width: 800,
     height: 600,
     left: 100,

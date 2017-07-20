@@ -34,34 +34,34 @@
 import * as React from 'react';
 import { remote } from 'electron';
 import { getSettings, Settings, addSettingsListener } from '../settings';
-import { Settings as ServerSettings } from '../../types/serverSettingsTypes';
-import { AddressBarActions, ConversationActions, ServerSettingsActions } from '../reducers';
-import { IBot, newBot } from '../../types/botTypes';
-import * as log from '../log';
+import { AddressBarActions, ServerSettingsActions } from '../reducers';
 import * as path from 'path';
 import * as Constants from '../constants';
 
 
-interface IAppSettings {
-    port?: number,
-    ngrokPath?: string
+interface AppSettingsDialogState extends React.Props<AppSettingsDialog> {
+    curTab?: string,
+    ngrokPath?: string,
 }
 
-enum Tabs {
-    ServiceUrl,
-    NgrokConfig
-}
-
-export class AppSettingsDialog extends React.Component<{}, {}> {
+export class AppSettingsDialog extends React.Component<{}, AppSettingsDialogState> {
     settingsUnsubscribe: any;
+    ngrokPathInputRef: any;
+    stateSizeLimitInputRef: any;
+    bypassNgrokLocalhostInputRef: any;
     showing: boolean;
 
-    emulatorPortInputRef: any;
-    serviceUrlInputRef: any;
-    ngrokPathInputRef: any;
-    currentTab: Tabs;
+    constructor(props) {
+        super(props);
+        let serverSettings = getSettings().serverSettings;
+        let ngrokPath = (serverSettings.framework && serverSettings.framework.ngrokPath) ?
+            serverSettings.framework.ngrokPath : null;
 
-    serviceUrlReadOnly: boolean;
+        this.state = {
+            curTab: "service",
+            ngrokPath: ngrokPath,
+        };
+    }
 
     pageClicked = (ev: Event) => {
         if (ev.defaultPrevented)
@@ -69,7 +69,6 @@ export class AppSettingsDialog extends React.Component<{}, {}> {
         let target = ev.srcElement;
         while (target) {
             if (target.className.toString().includes("appsettings")) {
-                ev.preventDefault();
                 return;
             }
             target = target.parentElement;
@@ -79,34 +78,17 @@ export class AppSettingsDialog extends React.Component<{}, {}> {
         this.onClose();
     }
 
-    portChanged = () => {
-        // Only let decimal digits through
-        let val: string = this.emulatorPortInputRef.value;
-        val = val.replace(/[^0-9]+/g, '');
-        this.emulatorPortInputRef.value = val;
-    }
-
     onAccept = () => {
         ServerSettingsActions.remote_setFrameworkServerSettings({
-            port: Number(this.emulatorPortInputRef.value),
-            serviceUrl: this.ngrokPathInputRef.value.length ? undefined : this.serviceUrlInputRef.value,
-            ngrokPath: this.ngrokPathInputRef.value
+            ngrokPath: this.ngrokPathInputRef.value,
+            bypassNgrokLocalhost: this.bypassNgrokLocalhostInputRef.checked,
+            stateSizeLimit: this.stateSizeLimitInputRef.value
         });
         AddressBarActions.hideAppSettings();
     }
 
     onClose = () => {
         AddressBarActions.hideAppSettings();
-    }
-
-    showServiceUrl = () => {
-        this.currentTab = Tabs.ServiceUrl;
-        this.forceUpdate();
-    }
-
-    showNgrokConfig = () => {
-        this.currentTab = Tabs.NgrokConfig;
-        this.forceUpdate();
     }
 
     browseForNgrokPath = () => {
@@ -120,25 +102,15 @@ export class AppSettingsDialog extends React.Component<{}, {}> {
             if (filenames && filenames.length) {
                 // TODO: validate selection
                 this.ngrokPathInputRef.value = filenames[0];
+                this.setState({ ngrokPath: filenames[0] });
             }
         })
     }
 
-    ngrokPathChanged = () => {
-        const serverSettings = getSettings().serverSettings;
-        this.serviceUrlReadOnly = (this.ngrokPathInputRef && this.ngrokPathInputRef.value.length) || (!this.ngrokPathInputRef && serverSettings.framework.ngrokPath.length && serverSettings.framework.ngrokRunning);
-    }
-
     componentWillMount() {
-        this.currentTab = Tabs.NgrokConfig;
         window.addEventListener('click', this.pageClicked);
         this.settingsUnsubscribe = addSettingsListener((settings: Settings) => {
             if (settings.addressBar.showAppSettings != this.showing) {
-                if (settings.serverSettings.framework.ngrokPath.length) {
-                    this.currentTab = Tabs.NgrokConfig;
-                } else {
-                    this.currentTab = Tabs.ServiceUrl;
-                }
                 this.showing = settings.addressBar.showAppSettings;
                 this.forceUpdate();
             }
@@ -150,11 +122,31 @@ export class AppSettingsDialog extends React.Component<{}, {}> {
         this.settingsUnsubscribe();
     }
 
+    private renderNavItem(name: string, contents: string): JSX.Element {
+        let classStr = "emu-navitem";
+        classStr += this.state.curTab === name ? " emu-navitem-selected" : "";
+        return <li>
+            <a id={name + "-nav"}
+                className={classStr}
+                onClick={() => this.setState({curTab: name})}
+                >
+                {contents}
+            </a>
+        </li>
+    }
+
+    private renderNavTab(name: string, contents: JSX.Element) {
+        let classStr = "emu-tab ";
+        classStr += this.state.curTab === name ? "emu-visible" : "emu-hidden";
+        return (<div className={classStr}>
+            {contents}
+        </div>)
+    }
+
     render() {
         const settings = getSettings();
         if (!settings.addressBar.showAppSettings) return null;
         const serverSettings = getSettings().serverSettings;
-        this.serviceUrlReadOnly = (this.ngrokPathInputRef && this.ngrokPathInputRef.value.length) || (!this.ngrokPathInputRef && serverSettings.framework.ngrokPath.length && serverSettings.framework.ngrokRunning);
         return (
             <div>
                 <div className="dialog-background">
@@ -162,66 +154,62 @@ export class AppSettingsDialog extends React.Component<{}, {}> {
                 <div className="emu-dialog appsettings-dialog">
                     <h2 className="dialog-header">App Settings</h2>
                     <div className="dialog-closex" onClick={() => this.onClose()} dangerouslySetInnerHTML={{ __html: Constants.clearCloseIcon("", 24) }} />
-                    <div className="input-group appsettings-port-group">
-                        <label className="form-label">
-                            Emulator Port:
-                        </label>
-                        <input
-                            type="text"
-                            ref={ref => this.emulatorPortInputRef = ref}
-                            onChange={() => this.portChanged()}
-                            className="form-input appsettings-port"
-                            defaultValue={`${serverSettings.framework.port || 9002}`} />
-                    </div>
                     <div className="appsettings-lowerpane">
                         <ul className="emu-navbar">
-                            <li>
-                                <a href="javascript:void(0)"
-                                    className={"emu-navitem" + (this.currentTab === Tabs.ServiceUrl ? " emu-navitem-selected" : "")}
-                                    onClick={() => this.showServiceUrl()}>
-                                    Callback URL
-                                </a>
-                            </li>
-                            <li>
-                                <a href="javascript:void(0)"
-                                    className={"emu-navitem" + (this.currentTab === Tabs.NgrokConfig ? " emu-navitem-selected" : "")}
-                                    onClick={() => this.showNgrokConfig()}>
-                                    Using ngrok?
-                                </a>
-                            </li>
+                            {this.renderNavItem("service", "Service")}
+                            {this.renderNavItem("state", "Bot State")}
                         </ul>
                         <hr className='enu-navhdr' />
-                        <div className={"emu-tab" + (this.currentTab === Tabs.ServiceUrl ? " emu-visible" : " emu-hidden")}>
-                            <div className='emu-dialog-text'>The Callback URL is where the bot sends reply messages.</div>
-                            <div className={'emu-dialog-text' + (this.serviceUrlReadOnly ? '' : ' emu-hidden')}>Note: ngrok is currently in control of this field. Clear your ngrok path to regain control of it.</div>
-                            <div className="input-group">
-                                <label className="form-label">
-                                    Callback URL:
-                                </label>
-                                <input
-                                    type="text"
-                                    ref={ref => this.serviceUrlInputRef = ref}
-                                    className={"form-input appsettings-url-input appsettings-serviceurl-input" + (this.serviceUrlReadOnly ? " emu-readonly" : "")}
-                                    readOnly={this.serviceUrlReadOnly}
-                                    //key={`${Math.random()}`}
-                                    defaultValue={`${serverSettings.framework.serviceUrl || ''}`} />
+                        {this.renderNavTab("service", (<div>
+                            <div className='emu-dialog-text'>
+                                <a title='https://ngrok.com' href='https://ngrok.com'>ngrok</a> is network tunneling software.
+                                The Bot Framework Emulator works with ngrok to communicate with bots hosted remotely.
+                                Read the <a title='https://github.com/Microsoft/BotFramework-Emulator/wiki/Tunneling-(ngrok)' href='https://aka.ms/szvi68'>wiki page</a> to learn more about using ngrok and to download it.
                             </div>
-                        </div>
-                        <div className={"emu-tab" + (this.currentTab === Tabs.NgrokConfig ? " emu-visible" : " emu-hidden")}>
-                            <div className='emu-dialog-text'>ngrok is network tunneling software. The Bot Framework Emulator works with ngrok to communicate with bots hosted remotely. To learn about ngrok and download it, visit <a href="https://ngrok.com/">ngrok.com</a>.</div>
                             <div className="input-group">
                                 <label className="form-label">
                                     Path to ngrok:
                                 </label>
                                 <input
                                     type="text"
+                                    name="ngrokPath"
                                     ref={ref => this.ngrokPathInputRef = ref}
-                                    onChange={() => this.ngrokPathChanged()}
                                     className="form-input appsettings-path-input appsettings-ngrokpath-input"
-                                    defaultValue={`${serverSettings.framework.ngrokPath || ''}`} />
+                                    defaultValue={`${serverSettings.framework.ngrokPath || ''}`}
+                                    onChange={(elem) => this.setState({ ngrokPath: elem.currentTarget.value })} />
                                 <button className='appsettings-browsebtn' onClick={() => this.browseForNgrokPath()}>Browse...</button>
                             </div>
-                        </div>
+                            <div className="input-group appsettings-checkbox-group">
+                                <label className="form-label clickable">
+                                    <input
+                                        type="checkbox"
+                                        name="bypassNgrokLocalhost"
+                                        ref={ref => this.bypassNgrokLocalhostInputRef = ref}
+                                        className="form-input"
+                                        defaultChecked={ serverSettings.framework.bypassNgrokLocalhost }
+                                        disabled={!(this.state.ngrokPath !== null ? this.state.ngrokPath : serverSettings.framework.ngrokPath)} />
+                                    Bypass ngrok for local addresses
+                                </label>
+                            </div>
+                        </div>) )}
+                        {this.renderNavTab("state", (<div>
+                            <div className='emu-dialog-text'>
+                                Bots use the <a href="https://aka.ms/sw9dcl">Bot State service</a> to store and retrieve application data. The Bot Framework's bot state service has a size limit of 64KB. Custom state services may differ.
+                            </div>
+                            <div className="input-group">
+                                <label className="form-label">
+                                    Size limit (zero for no limit):
+                                </label>
+                                <input
+                                    type="number"
+                                    name="stateStorage"
+                                    ref={ref => this.stateSizeLimitInputRef = ref}
+                                    className="form-input appsettings-number-input appsettings-space-input"
+                                    min={0}
+                                    max={4000000}
+                                    defaultValue={String(serverSettings.framework.stateSizeLimit) || '64'} /> KB
+                            </div>
+                        </div>) )}
                     </div>
                     <div className="dialog-buttons">
                         <button className="appsettings-savebtn" onClick={() => this.onAccept()}>Save</button>
